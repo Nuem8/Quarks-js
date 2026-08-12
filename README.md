@@ -1,38 +1,37 @@
 # Quarks-JS
 
-A **pure JavaScript + HTML** WebGL particle background with connected “quarks,” electric-style links, and mouse interactivity. No frameworks, no build step—drop it into any page or use it as a full-screen demo.
+**Developer:** Kevin Roper · **License:** [MIT](LICENSE) (Copyright © 2026 Kevin Roper)
+
+**A living particle field for the web.**  
+WebGL quarks that wander, flock, spark, hunt, and die — all in pure JavaScript. Zero dependencies. Zero build step. Open `index.html` and it’s already moving.
 
 ---
 
-## Uses
+## Why it hits
 
-- **Hero / landing backgrounds** — Full-viewport animated particles behind headlines or CTAs  
-- **Portfolio and personal sites** — Subtle motion that doesn’t distract from content  
-- **Demos and kiosks** — Standalone `index.html` runs in any modern browser  
-- **Embedded canvases** — Use a single full-screen or contained canvas; particles respect viewport and obstacles  
-- **Custom themes** — Configure particle count, colors, link style (solid vs electric), speed, and density via one config object  
-- **Low dependency** — No npm, no React/Vue; works with static HTML or any stack that can include two script tags and a canvas  
-- **WebGL** — GPU-accelerated so it stays smooth with many particles and links on high-DPI displays  
+Most particle backgrounds just drift. Quarks-JS behaves.
 
----
+- **Electric links** that tint to whatever they connect — prey green, predator pink, corpse grey
+- **Wander + boids** so motion feels curious instead of robotic
+- **Evolve mode** — eat, grow, become a predator blob, age out, get scavenged
+- **Mouse grab & attract** so the field notices you
+- **DOM obstacles** (`.quark-obstacle`) so UI stays clear while the chaos flows around it
 
-## Quick start
-
-1. **Clone or download** this repo.
-2. **Open `index.html`** in a browser (or serve the folder with any static server).
-3. **Optional:** Edit `js/config.js` to change particle count, colors, link style, and interactivity.
-
-No build or install required.
+Drop it behind a hero. Leave it full-screen as a demo. Either way, it looks expensive and costs nothing to run.
 
 ---
 
-## Usage in your own page
+## Instant vibe check
 
-1. Copy **`js/webgl-quarks.js`** and **`js/config.js`** (or define your own config object).
-2. Add a `<canvas>` with an `id` you’ll pass to the init function.
-3. Include the scripts (config before webgl-quarks), then call `initQuarksWebGL(canvasId, config)` when the DOM is ready.
+1. Clone or download  
+2. Open `index.html`  
+3. Close the controls panel and watch the ecosystem breathe  
 
-Example:
+No npm. No bundler. No waiting.
+
+---
+
+## Drop it on any page
 
 ```html
 <canvas id="my-quarks"></canvas>
@@ -45,31 +44,50 @@ Example:
 </script>
 ```
 
-Make the canvas full-viewport (or the area you want) with CSS, e.g. `position: fixed; inset: 0; width: 100%; height: 100%;`.
+Stretch the canvas:
+
+```css
+#my-quarks {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+```
+
+Mark blockers with `class="quark-obstacle"` (cards, logos, dialogs) and particles bounce off their boxes.
 
 ---
 
-## Configuration
+## Dial the mood
 
-The config object (see `js/config.js`) controls:
+Everything lives in `js/config.js` — or tweak live in the demo panel.
 
-| Area | Options |
-|------|--------|
-| **Particles** | Count, density (per area), color (hex), opacity, size (with optional random) |
-| **Links** | On/off, distance, color, opacity, line width; **electric** mode: jitter, segments, dot size |
-| **Motion** | Speed, wrap vs bounce at edges |
-| **Interactivity** | **grab** — links from cursor to nearby particles; **attract** — particles gently move toward cursor (distance, strength, max speed) |
+| Knob | What it does |
+|------|----------------|
+| **Particles** | Density, size, opacity, prey / predator colors |
+| **Links** | Distance, electric crackle, role-tinted arcs |
+| **Motion** | Speed, wander, boids (separation / alignment / cohesion) |
+| **Evolve** | Eat-to-grow, max size, predator spawn, max age, corpse scavenging |
+| **Interactivity** | Cursor grab links + attract pull |
 
-Elements with the class **`quark-obstacle`** are treated as obstacles: particles bounce off their bounding boxes so content (e.g. a logo or card) stays clear.
+Predators aren’t circles — they’re animated **attack blobs** that spike toward their hunt. When they hit max age they go grey; prey move in and nibble them down to nothing.
 
 ---
 
-## Browser support
+## Stack
 
-Any browser with **WebGL** support (e.g. modern Chrome, Firefox, Safari, Edge). The script uses a single canvas and standard Web GL 1.0 APIs.
+- Pure **HTML + JS**
+- **WebGL 1.0** points & lines
+- Works in modern Chrome, Firefox, Safari, Edge
+
+Built for hero sections, portfolios, kiosks, and anyone who wants motion that feels *alive*.
 
 ---
 
 ## License
 
-See [LICENSE](LICENSE) in this repository. This project is suitable for public GitHub repos and reuse in personal or commercial projects according to the license terms.
+**Developer:** Kevin Roper  
+**License:** [MIT](LICENSE) — Copyright © 2026 Kevin Roper  
+
+Use it, remix it, ship it — personal or commercial, per the license terms.

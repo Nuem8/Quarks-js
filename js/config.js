@@ -2,6 +2,9 @@
  * Default configuration for Quarks-JS WebGL particle background.
  * Loaded before webgl-quarks.js; passed to initQuarksWebGL as quarksWebglConfig.
  *
+ * Developer: Kevin Roper
+ * License:   MIT — see LICENSE (Copyright (c) 2026 Kevin Roper)
+ *
  * Config items
  * ------------
  * particles.number            Count and optional area density
@@ -12,13 +15,14 @@
  *   .wander                   Soft random steering (enable, strength, rate)
  *   .boids                    Flocking: distance, separation_distance, weights
  *   .evolve                   Eat-to-grow: max size, predators, predator attacks,
- *                             prey_color / predator_color
+ *                             prey/predator/dead colors, predator max age, corpses
  * interactivity.events        Hover modes: grab, attract
  * interactivity.modes.grab    Cursor link distance / opacity
  * interactivity.modes.attract Cursor pull strength / max_speed
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Added predator_max_age, dead_color, corpse scavenging shrink.
  * 2026-08-12  Added evolve.prey_color alongside predator_color for role tinting.
  * 2026-08-12  Added move.evolve (eat/grow, max size, predator chase/flee,
  *             predator-vs-predator attacks, respawn).
@@ -36,7 +40,7 @@ var quarksWebglConfig = {
       }
     },
     color: {
-      value: '#ffffff'
+      value: '#3dff6a'
     },
     opacity: {
       value: 0.5
@@ -93,9 +97,14 @@ var quarksWebglConfig = {
         sense_distance: 170,
         eat_cooldown: 10,
         respawn: true,
-        prey_color: '#ffffff',
+        prey_color: '#3dff6a',
         predator_color: '#ff5c8a',
-        predator_opacity: 0.85
+        predator_opacity: 0.85,
+        predator_max_age: 12,
+        dead_color: '#8a909c',
+        dead_opacity: 0.4,
+        corpse_shrink: 0.4,
+        corpse_bite_cooldown: 5
       }
     }
   },

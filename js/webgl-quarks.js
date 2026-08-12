@@ -2,6 +2,9 @@
  * Quarks-JS — WebGL particle background with links and interactivity.
  * Pure JavaScript, no dependencies. Exposes initQuarksWebGL(canvasId, config) on window.
  *
+ * Developer: Kevin Roper
+ * License:   MIT — see LICENSE (Copyright (c) 2026 Kevin Roper)
+ *
  * Contents
  * --------
  * - hexToRgb / normalizeMode          Color + hover-mode helpers
@@ -21,6 +24,8 @@
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Predators die at max age (grey corpses); prey scavenge them,
+ *             shrinking size until respawn at zero.
  * 2026-08-12  Predators render as animated attack blobs (wobble + heading spike);
  *             prey stay circular points.
  * 2026-08-12  Electric/solid links tint from linked particle colors (predator links
@@ -305,6 +310,14 @@
     return { r: 255, g: 92, b: 138 };
   };
 
+  WebGLQuarks.prototype.getDeadColor = function () {
+    var evolve = this.getEvolveConfig();
+    if (evolve && evolve.dead_color) {
+      return hexToRgb(evolve.dead_color);
+    }
+    return { r: 138, g: 144, b: 156 };
+  };
+
   WebGLQuarks.prototype.createParticles = function () {
     var count = this.getParticleCount();
     var sizeValue = this.config.particles.size.value;
@@ -318,6 +331,7 @@
       ? evolve.predator_opacity
       : 0.85;
     var maxSize = evolve && evolve.max_size != null ? evolve.max_size : sizeValue * 4;
+    var now = performance.now();
     this.particles = [];
     for (var i = 0; i < count; i++) {
       var radius = (sizeRandom ? Math.random() : 1) * sizeValue;
@@ -335,7 +349,8 @@
         opacity: isPredator ? predatorOpacity : opacity,
         wanderAngle: Math.random() * Math.PI * 2,
         role: isPredator ? 'predator' : 'prey',
-        eatCooldown: 0
+        eatCooldown: 0,
+        bornAt: isPredator ? now : 0
       };
       if (p.radius > maxSize) {
         p.radius = maxSize;
@@ -379,6 +394,9 @@
         continue;
       }
       var other = this.particles[j];
+      if (other.role === 'corpse') {
+        continue;
+      }
       var dx = p.x - other.x;
       var dy = p.y - other.y;
       var distSq = dx * dx + dy * dy;
@@ -429,21 +447,37 @@
 
   WebGLQuarks.prototype.promoteIfNeeded = function (p, evolve) {
     var threshold = evolve.predator_threshold != null ? evolve.predator_threshold : 5.5;
-    if (p.role !== 'predator' && p.radius >= threshold) {
+    if (p.role === 'prey' && p.radius >= threshold) {
       p.role = 'predator';
       p.color = this.getPredatorColor();
       p.opacity = evolve.predator_opacity != null
         ? evolve.predator_opacity
         : 0.85;
+      p.bornAt = performance.now();
     }
+  };
+
+  WebGLQuarks.prototype.killPredator = function (p, evolve) {
+    p.role = 'corpse';
+    p.color = this.getDeadColor();
+    p.opacity = evolve.dead_opacity != null ? evolve.dead_opacity : 0.4;
+    p.vx *= 0.25;
+    p.vy *= 0.25;
+    p.eatCooldown = 0;
   };
 
   WebGLQuarks.prototype.canEat = function (hunter, prey, evolve, ignoreCooldown) {
     if (!hunter || !prey || hunter === prey) {
       return false;
     }
+    if (hunter.role === 'corpse') {
+      return false;
+    }
     if (!ignoreCooldown && hunter.eatCooldown > 0) {
       return false;
+    }
+    if (prey.role === 'corpse') {
+      return hunter.role === 'prey';
     }
     var advantage = evolve.size_advantage != null ? evolve.size_advantage : 1.12;
     if (hunter.radius < prey.radius * advantage) {
@@ -464,7 +498,7 @@
   };
 
   WebGLQuarks.prototype.applyEvolveSteering = function (p, index, evolve) {
-    if (!evolve || !evolve.enable) {
+    if (!evolve || !evolve.enable || p.role === 'corpse') {
       return;
     }
     var sense = evolve.sense_distance != null ? evolve.sense_distance : 170;
@@ -496,7 +530,7 @@
         }
       }
 
-      if (p.role !== 'predator' && other.role === 'predator') {
+      if (p.role === 'prey' && other.role === 'predator') {
         fleeX -= dx / dist;
         fleeY -= dy / dist;
         fleeCount += 1;
@@ -516,9 +550,10 @@
       var tdx = bestTarget.x - p.x;
       var tdy = bestTarget.y - p.y;
       var tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+      var chaseBoost = bestTarget.role === 'corpse' ? chase * 1.25 : chase;
       if (tDist > 0) {
-        p.vx += (tdx / tDist) * chase;
-        p.vy += (tdy / tDist) * chase;
+        p.vx += (tdx / tDist) * chaseBoost;
+        p.vy += (tdy / tDist) * chaseBoost;
       }
     }
 
@@ -543,6 +578,7 @@
     p.role = 'prey';
     p.eatCooldown = 0;
     p.wanderAngle = Math.random() * Math.PI * 2;
+    p.bornAt = 0;
   };
 
   WebGLQuarks.prototype.resolveEvolve = function (evolve) {
@@ -552,15 +588,28 @@
     var maxSize = evolve.max_size != null ? evolve.max_size : 14;
     var growth = evolve.growth_per_eat != null ? evolve.growth_per_eat : 0.55;
     var cooldown = evolve.eat_cooldown != null ? evolve.eat_cooldown : 10;
+    var corpseShrink = evolve.corpse_shrink != null ? evolve.corpse_shrink : 0.4;
+    var corpseCooldown = evolve.corpse_bite_cooldown != null ? evolve.corpse_bite_cooldown : 5;
+    var maxAge = evolve.predator_max_age != null ? evolve.predator_max_age : 12;
     var respawn = evolve.respawn !== false;
     var eaten = {};
+    var now = performance.now();
+
+    for (var a = 0; a < this.particles.length; a++) {
+      var aging = this.particles[a];
+      if (aging.role === 'predator' && aging.bornAt > 0) {
+        if ((now - aging.bornAt) / 1000 >= maxAge) {
+          this.killPredator(aging, evolve);
+        }
+      }
+    }
 
     for (var i = 0; i < this.particles.length; i++) {
       var hunter = this.particles[i];
       if (hunter.eatCooldown > 0) {
         hunter.eatCooldown -= 1;
       }
-      if (eaten[i]) {
+      if (eaten[i] || hunter.role === 'corpse') {
         continue;
       }
 
@@ -568,23 +617,38 @@
         if (i === j || eaten[j]) {
           continue;
         }
-        var prey = this.particles[j];
-        if (!this.canEat(hunter, prey, evolve)) {
+        var target = this.particles[j];
+        if (!this.canEat(hunter, target, evolve)) {
           continue;
         }
-        var dx = hunter.x - prey.x;
-        var dy = hunter.y - prey.y;
-        var reach = (hunter.radius + prey.radius) * this.pixelRatio;
+        var dx = hunter.x - target.x;
+        var dy = hunter.y - target.y;
+        var reach = (hunter.radius + Math.max(target.radius, 0.5)) * this.pixelRatio;
         if (dx * dx + dy * dy > reach * reach) {
           continue;
         }
 
-        hunter.radius = Math.min(maxSize, hunter.radius + growth * (0.65 + prey.radius * 0.12));
+        if (target.role === 'corpse') {
+          target.radius -= corpseShrink;
+          hunter.radius = Math.min(maxSize, hunter.radius + corpseShrink * 0.35);
+          hunter.eatCooldown = corpseCooldown;
+          this.promoteIfNeeded(hunter, evolve);
+          if (target.radius <= 0.15) {
+            if (respawn) {
+              this.respawnParticle(target, evolve);
+            } else {
+              eaten[j] = true;
+            }
+          }
+          break;
+        }
+
+        hunter.radius = Math.min(maxSize, hunter.radius + growth * (0.65 + target.radius * 0.12));
         hunter.eatCooldown = cooldown;
         this.promoteIfNeeded(hunter, evolve);
 
         if (respawn) {
-          this.respawnParticle(prey, evolve);
+          this.respawnParticle(target, evolve);
         } else {
           eaten[j] = true;
         }
@@ -606,6 +670,10 @@
     if (evolve && evolve.enable && p.role === 'predator') {
       maxSpeed *= 1.15;
     }
+    if (p.role === 'corpse') {
+      maxSpeed *= 0.35;
+      minSpeed = 0;
+    }
     var v = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
     if (v > maxSpeed && v > 0) {
       p.vx = (p.vx / v) * maxSpeed;
@@ -613,7 +681,7 @@
     } else if (v > 0 && v < minSpeed) {
       p.vx = (p.vx / v) * minSpeed;
       p.vy = (p.vy / v) * minSpeed;
-    } else if (v === 0) {
+    } else if (v === 0 && p.role !== 'corpse') {
       var angle = p.wanderAngle || Math.random() * Math.PI * 2;
       p.vx = Math.cos(angle) * minSpeed;
       p.vy = Math.sin(angle) * minSpeed;
@@ -666,29 +734,35 @@
       var attracted = false;
 
       if (move.enable) {
-        this.applyWander(p, wander);
-        this.applyBoids(p, i, boids);
-        this.applyEvolveSteering(p, i, evolve);
-
-        if (this.mouse.active && this.isAttractEnabled) {
-          var dx = this.mouse.x - p.x;
-          var dy = this.mouse.y - p.y;
-          var dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist > 0 && dist <= attract.distance) {
-            p.vx += (dx / dist) * attract.strength;
-            p.vy += (dy / dist) * attract.strength;
-            attracted = true;
-          }
-        }
-
-        if (attracted && attract.max_speed && attract.max_speed > 0) {
-          var av = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-          if (av > attract.max_speed) {
-            p.vx = (p.vx / av) * attract.max_speed;
-            p.vy = (p.vy / av) * attract.max_speed;
-          }
-        } else {
+        if (p.role === 'corpse') {
+          p.vx *= 0.94;
+          p.vy *= 0.94;
           this.clampSpeed(p, move);
+        } else {
+          this.applyWander(p, wander);
+          this.applyBoids(p, i, boids);
+          this.applyEvolveSteering(p, i, evolve);
+
+          if (this.mouse.active && this.isAttractEnabled) {
+            var dx = this.mouse.x - p.x;
+            var dy = this.mouse.y - p.y;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > 0 && dist <= attract.distance) {
+              p.vx += (dx / dist) * attract.strength;
+              p.vy += (dy / dist) * attract.strength;
+              attracted = true;
+            }
+          }
+
+          if (attracted && attract.max_speed && attract.max_speed > 0) {
+            var av = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (av > attract.max_speed) {
+              p.vx = (p.vx / av) * attract.max_speed;
+              p.vy = (p.vy / av) * attract.max_speed;
+            }
+          } else {
+            this.clampSpeed(p, move);
+          }
         }
 
         p.x += p.vx * speed;

@@ -2,6 +2,9 @@
 <!--
   Quarks-JS demo page — full-viewport WebGL particle background.
 
+  Developer: Kevin Roper
+  License:   MIT — see LICENSE (Copyright (c) 2026 Kevin Roper)
+
   Items
   -----
   #quarks-canvas     Full-screen canvas target for the engine
@@ -12,6 +15,7 @@
 
   Modification log
   ----------------
+  2026-08-12  Added predator max-age control; corpses scavenged by prey.
   2026-08-12  Added prey/predator color pickers in the controls dialog.
   2026-08-12  Added evolve live tweaks (eat/grow, max size, predator attack).
   2026-08-12  Added centered info/controls dialog with live config tweaks;
@@ -382,7 +386,7 @@
         <div class="color-row" aria-label="Role colors">
           <label class="color-field" for="ctrl-prey-color">
             Prey
-            <input id="ctrl-prey-color" type="color" value="#ffffff">
+            <input id="ctrl-prey-color" type="color" value="#3dff6a">
           </label>
           <label class="color-field" for="ctrl-predator-color">
             Predator
@@ -441,6 +445,14 @@
 
           <div class="slider-row">
             <div class="row">
+              <label for="ctrl-predator-age">Predator max age (s)</label>
+              <span class="value" id="val-predator-age">12</span>
+            </div>
+            <input id="ctrl-predator-age" type="range" min="3" max="40" step="1" value="12">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
               <label for="ctrl-growth">Growth per eat</label>
               <span class="value" id="val-growth">0.55</span>
             </div>
@@ -482,10 +494,11 @@
       </section>
 
       <p class="hint">
-        Close this panel to watch the field full-screen.         Predators appear as animated attack blobs (not plain circles); prey stay
-        round. Predators chase and eat smaller boids to grow (capped by max size).
-        With <strong>Predator attack</strong> on, larger predators can eat smaller
-        ones. Eaten prey respawn. This dialog is also a <code>.quark-obstacle</code>.
+        Close this panel to watch the field full-screen.         Predators appear as animated attack blobs; prey stay round. After max age,
+        predators die grey and drift; prey scavenge them, shrinking the corpse until
+        it vanishes and respawns. With <strong>Predator attack</strong> on, larger
+        living predators can eat smaller ones. This dialog is also a
+        <code>.quark-obstacle</code>.
       </p>
     </aside>
   </div>
@@ -585,9 +598,16 @@
         }
         var prey = hexToRgbLocal(quarksWebglConfig.particles.move.evolve.prey_color);
         var predator = hexToRgbLocal(quarksWebglConfig.particles.move.evolve.predator_color);
+        var dead = hexToRgbLocal(quarksWebglConfig.particles.move.evolve.dead_color || '#8a909c');
         for (var i = 0; i < engine.particles.length; i++) {
           var p = engine.particles[i];
-          p.color = p.role === 'predator' ? predator : prey;
+          if (p.role === 'predator') {
+            p.color = predator;
+          } else if (p.role === 'corpse') {
+            p.color = dead;
+          } else {
+            p.color = prey;
+          }
         }
       }
 
@@ -659,6 +679,9 @@
           }
         }
       });
+      bindSlider('ctrl-predator-age', 'val-predator-age', 0, function (v) {
+        quarksWebglConfig.particles.move.evolve.predator_max_age = v;
+      });
       bindSlider('ctrl-growth', 'val-growth', 2, function (v) {
         quarksWebglConfig.particles.move.evolve.growth_per_eat = v;
       });
@@ -674,7 +697,7 @@
         quarksWebglConfig.particles.opacity.value = v;
         if (engine && engine.particles) {
           for (var i = 0; i < engine.particles.length; i++) {
-            if (engine.particles[i].role !== 'predator') {
+            if (engine.particles[i].role === 'prey') {
               engine.particles[i].opacity = v;
             }
           }
