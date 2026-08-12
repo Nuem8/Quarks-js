@@ -11,13 +11,15 @@
  * particles.move              Motion: speed, wrap/bounce, cruise clamp
  *   .wander                   Soft random steering (enable, strength, rate)
  *   .boids                    Flocking: distance, separation_distance, weights
- *   .evolve                   Eat-to-grow: max size, predators, predator attacks
+ *   .evolve                   Eat-to-grow: max size, predators, predator attacks,
+ *                             prey_color / predator_color
  * interactivity.events        Hover modes: grab, attract
  * interactivity.modes.grab    Cursor link distance / opacity
  * interactivity.modes.attract Cursor pull strength / max_speed
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Added evolve.prey_color alongside predator_color for role tinting.
  * 2026-08-12  Added move.evolve (eat/grow, max size, predator chase/flee,
  *             predator-vs-predator attacks, respawn).
  * 2026-08-12  Added move.max_speed, move.min_speed, move.wander, move.boids
@@ -91,6 +93,7 @@ var quarksWebglConfig = {
         sense_distance: 170,
         eat_cooldown: 10,
         respawn: true,
+        prey_color: '#ffffff',
         predator_color: '#ff5c8a',
         predator_opacity: 0.85
       }

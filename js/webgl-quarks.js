@@ -7,6 +7,7 @@
  * - hexToRgb / normalizeMode          Color + hover-mode helpers
  * - createShader / createProgram      WebGL shader compile/link
  * - WebGLQuarks                       Engine: particles, update, draw, mouse, obstacles
+ *   - getPreyColor / getPredatorColor Role tint helpers
  *   - createParticles                 Spawn agents (position, velocity, wanderAngle, role)
  *   - applyWander                     Smooth random steering
  *   - applyBoids                      Separation, alignment, cohesion
@@ -20,6 +21,11 @@
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Predators render as animated attack blobs (wobble + heading spike);
+ *             prey stay circular points.
+ * 2026-08-12  Electric/solid links tint from linked particle colors (predator links
+ *             use predator color; mixed pairs blend along the segment).
+ * 2026-08-12  Added prey/predator color helpers and evolve.prey_color support.
  * 2026-08-12  Added evolve: eat-to-grow with max size, predator roles, chase/flee,
  *             optional predator-vs-predator attacks, and prey respawn.
  * 2026-08-12  Added boids-lite (separation / alignment / cohesion) and wander steering;
@@ -97,6 +103,7 @@
     this.isGrabEnabled = this.onhoverModes.indexOf('grab') !== -1;
     this.isAttractEnabled = this.onhoverModes.indexOf('attract') !== -1;
     this.obstacleSelector = '.quark-obstacle';
+    this.startTime = performance.now();
   }
 
   WebGLQuarks.prototype.init = function () {
@@ -117,25 +124,55 @@
       'attribute vec2 a_position;',
       'attribute float a_size;',
       'attribute vec4 a_color;',
+      'attribute float a_blob;',
+      'attribute float a_heading;',
       'uniform vec2 u_resolution;',
       'varying vec4 v_color;',
+      'varying float v_blob;',
+      'varying float v_heading;',
       'void main(){',
       '  vec2 zeroToOne = a_position / u_resolution;',
       '  vec2 clip = zeroToOne * 2.0 - 1.0;',
       '  gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);',
       '  gl_PointSize = a_size;',
       '  v_color = a_color;',
+      '  v_blob = a_blob;',
+      '  v_heading = a_heading;',
       '}'
     ].join('\n');
 
     var pointFragment = [
       'precision mediump float;',
       'varying vec4 v_color;',
+      'varying float v_blob;',
+      'varying float v_heading;',
+      'uniform float u_time;',
       'void main(){',
       '  vec2 c = gl_PointCoord - vec2(0.5);',
-      '  float dist = dot(c, c);',
-      '  if(dist > 0.25){ discard; }',
-      '  gl_FragColor = v_color;',
+      '  float r = length(c);',
+      '  if(v_blob < 0.5){',
+      '    if(r > 0.5){ discard; }',
+      '    gl_FragColor = v_color;',
+      '    return;',
+      '  }',
+      '  float ang = atan(c.y, c.x);',
+      '  float t = u_time;',
+      '  float wobble = 0.10 * sin(ang * 3.0 + t * 4.4);',
+      '  wobble += 0.07 * sin(ang * 5.0 - t * 3.1);',
+      '  wobble += 0.05 * sin(ang * 2.0 + t * 2.6 + v_heading);',
+      '  float pulse = 0.03 * sin(t * 6.5);',
+      '  float dAng = ang - v_heading;',
+      '  dAng = mod(dAng + 3.14159265, 6.2831853) - 3.14159265;',
+      '  float attack = pow(max(0.0, cos(dAng)), 10.0);',
+      '  float spike = (0.16 + 0.05 * sin(t * 9.0)) * attack;',
+      '  float limit = 0.40 + wobble + pulse + spike;',
+      '  if(r > limit){ discard; }',
+      '  float core = smoothstep(limit, limit * 0.25, r);',
+      '  float rim = smoothstep(limit * 0.92, limit * 0.55, r);',
+      '  vec3 tint = mix(v_color.rgb * 0.72, v_color.rgb * 1.25, rim);',
+      '  tint = mix(tint, vec3(1.0, 0.92, 0.95), attack * 0.35 * (1.0 - r * 1.4));',
+      '  float alpha = v_color.a * (0.55 + 0.45 * core);',
+      '  gl_FragColor = vec4(tint, alpha);',
       '}'
     ].join('\n');
 
@@ -169,6 +206,8 @@
     this.pointPositionBuffer = gl.createBuffer();
     this.pointColorBuffer = gl.createBuffer();
     this.pointSizeBuffer = gl.createBuffer();
+    this.pointBlobBuffer = gl.createBuffer();
+    this.pointHeadingBuffer = gl.createBuffer();
     this.linePositionBuffer = gl.createBuffer();
     this.lineColorBuffer = gl.createBuffer();
   };
@@ -250,17 +289,31 @@
     return Math.max(1, Math.round(area * base / this.config.particles.number.density.value_area));
   };
 
+  WebGLQuarks.prototype.getPreyColor = function () {
+    var evolve = this.getEvolveConfig();
+    if (evolve && evolve.prey_color) {
+      return hexToRgb(evolve.prey_color);
+    }
+    return hexToRgb(this.config.particles.color.value);
+  };
+
+  WebGLQuarks.prototype.getPredatorColor = function () {
+    var evolve = this.getEvolveConfig();
+    if (evolve && evolve.predator_color) {
+      return hexToRgb(evolve.predator_color);
+    }
+    return { r: 255, g: 92, b: 138 };
+  };
+
   WebGLQuarks.prototype.createParticles = function () {
     var count = this.getParticleCount();
     var sizeValue = this.config.particles.size.value;
     var sizeRandom = this.config.particles.size.random;
     var opacity = this.config.particles.opacity.value;
-    var color = hexToRgb(this.config.particles.color.value);
+    var color = this.getPreyColor();
     var evolve = this.config.particles.move.evolve;
     var predatorChance = evolve && evolve.enable ? (evolve.predator_chance || 0) : 0;
-    var predatorColor = evolve && evolve.predator_color
-      ? hexToRgb(evolve.predator_color)
-      : { r: 255, g: 92, b: 138 };
+    var predatorColor = this.getPredatorColor();
     var predatorOpacity = evolve && evolve.predator_opacity != null
       ? evolve.predator_opacity
       : 0.85;
@@ -378,9 +431,7 @@
     var threshold = evolve.predator_threshold != null ? evolve.predator_threshold : 5.5;
     if (p.role !== 'predator' && p.radius >= threshold) {
       p.role = 'predator';
-      p.color = evolve.predator_color
-        ? hexToRgb(evolve.predator_color)
-        : { r: 255, g: 92, b: 138 };
+      p.color = this.getPredatorColor();
       p.opacity = evolve.predator_opacity != null
         ? evolve.predator_opacity
         : 0.85;
@@ -480,7 +531,7 @@
   WebGLQuarks.prototype.respawnParticle = function (p, evolve) {
     var sizeValue = this.config.particles.size.value;
     var opacity = this.config.particles.opacity.value;
-    var color = hexToRgb(this.config.particles.color.value);
+    var color = this.getPreyColor();
     var angle = Math.random() * Math.PI * 2;
     p.x = Math.random() * this.canvas.width;
     p.y = Math.random() * this.canvas.height;
@@ -662,15 +713,16 @@
     this.resolveEvolve(evolve);
   };
 
-  WebGLQuarks.prototype.addLineSegment = function (linePositions, lineColors, x1, y1, x2, y2, color, alpha) {
+  WebGLQuarks.prototype.addLineSegment = function (linePositions, lineColors, x1, y1, x2, y2, color1, alpha, color2) {
     linePositions.push(x1, y1, x2, y2);
-    var r = color.r / 255;
-    var g = color.g / 255;
-    var b = color.b / 255;
-    lineColors.push(r, g, b, alpha, r, g, b, alpha);
+    var c2 = color2 || color1;
+    lineColors.push(
+      color1.r / 255, color1.g / 255, color1.b / 255, alpha,
+      c2.r / 255, c2.g / 255, c2.b / 255, alpha
+    );
   };
 
-  WebGLQuarks.prototype.addElectricDots = function (dotPositions, dotColors, dotSizes, p1, p2, color, alpha) {
+  WebGLQuarks.prototype.addElectricDots = function (dotPositions, dotColors, dotSizes, p1, p2, color1, alpha, color2) {
     var electric = this.config.particles.line_linked.electric;
     var segments = Math.max(2, Math.round(electric.segments || 6));
     var jitter = electric.jitter || 10;
@@ -683,15 +735,26 @@
     var nx = -dy / dist;
     var ny = dx / dist;
     var dotSize = electric.dot_size || this.config.particles.size.value || 2;
+    var c2 = color2 || color1;
     for (var s = 0; s <= segments; s++) {
       var t = s / segments;
       var offset = (Math.random() * 2 - 1) * jitter;
       var x = p1.x + dx * t + nx * offset;
       var y = p1.y + dy * t + ny * offset;
+      var r = (color1.r + (c2.r - color1.r) * t) / 255;
+      var g = (color1.g + (c2.g - color1.g) * t) / 255;
+      var b = (color1.b + (c2.b - color1.b) * t) / 255;
       dotPositions.push(x, y);
-      dotColors.push(color.r / 255, color.g / 255, color.b / 255, alpha);
+      dotColors.push(r, g, b, alpha);
       dotSizes.push(dotSize * this.pixelRatio);
     }
+  };
+
+  WebGLQuarks.prototype.linkColorForParticle = function (p, fallback) {
+    if (p && p.color) {
+      return p.color;
+    }
+    return fallback;
   };
 
   WebGLQuarks.prototype.buildLines = function () {
@@ -717,10 +780,12 @@
           if (dist <= lineCfg.distance) {
             var opacity = lineCfg.opacity - (dist / (1 / lineCfg.opacity)) / lineCfg.distance;
             if (opacity > 0) {
+              var c1 = this.linkColorForParticle(p1, lineColor);
+              var c2 = this.linkColorForParticle(p2, lineColor);
               if (useElectric) {
-                this.addElectricDots(dotPositions, dotColors, dotSizes, p1, p2, lineColor, opacity);
+                this.addElectricDots(dotPositions, dotColors, dotSizes, p1, p2, c1, opacity, c2);
               } else {
-                this.addLineSegment(linePositions, lineColors, p1.x, p1.y, p2.x, p2.y, lineColor, opacity);
+                this.addLineSegment(linePositions, lineColors, p1.x, p1.y, p2.x, p2.y, c1, opacity, c2);
               }
             }
           }
@@ -737,6 +802,7 @@
         if (distMouse <= grabCfg.distance) {
           var opacityMouse = grabOpacity - (distMouse / (1 / grabOpacity)) / grabCfg.distance;
           if (opacityMouse > 0) {
+            var particleColor = this.linkColorForParticle(p, lineColor);
             var cursorColor = { r: 255, g: 255, b: 255 };
             if (useElectric) {
               this.addElectricDots(
@@ -745,11 +811,22 @@
                 dotSizes,
                 p,
                 { x: this.mouse.x, y: this.mouse.y },
-                cursorColor,
-                opacityMouse
+                particleColor,
+                opacityMouse,
+                cursorColor
               );
             } else {
-              this.addLineSegment(linePositions, lineColors, p.x, p.y, this.mouse.x, this.mouse.y, cursorColor, opacityMouse);
+              this.addLineSegment(
+                linePositions,
+                lineColors,
+                p.x,
+                p.y,
+                this.mouse.x,
+                this.mouse.y,
+                particleColor,
+                opacityMouse,
+                cursorColor
+              );
             }
           }
         }
@@ -770,17 +847,28 @@
     var positions = new Float32Array(this.particles.length * 2);
     var colors = new Float32Array(this.particles.length * 4);
     var sizes = new Float32Array(this.particles.length);
+    var blobs = new Float32Array(this.particles.length);
+    var headings = new Float32Array(this.particles.length);
     for (var i = 0; i < this.particles.length; i++) {
       var p = this.particles[i];
+      var isPredator = p.role === 'predator';
       positions[i * 2] = p.x;
       positions[i * 2 + 1] = p.y;
       colors[i * 4] = p.color.r / 255;
       colors[i * 4 + 1] = p.color.g / 255;
       colors[i * 4 + 2] = p.color.b / 255;
       colors[i * 4 + 3] = p.opacity;
-      sizes[i] = p.radius * 2 * this.pixelRatio;
+      sizes[i] = p.radius * 2 * this.pixelRatio * (isPredator ? 1.55 : 1);
+      blobs[i] = isPredator ? 1 : 0;
+      headings[i] = Math.atan2(-p.vy, p.vx);
     }
-    return { positions: positions, colors: colors, sizes: sizes };
+    return {
+      positions: positions,
+      colors: colors,
+      sizes: sizes,
+      blobs: blobs,
+      headings: headings
+    };
   };
 
   WebGLQuarks.prototype.drawLines = function (lines) {
@@ -811,7 +899,10 @@
     var positionLoc = gl.getAttribLocation(this.pointProgram, 'a_position');
     var sizeLoc = gl.getAttribLocation(this.pointProgram, 'a_size');
     var colorLoc = gl.getAttribLocation(this.pointProgram, 'a_color');
+    var blobLoc = gl.getAttribLocation(this.pointProgram, 'a_blob');
+    var headingLoc = gl.getAttribLocation(this.pointProgram, 'a_heading');
     var resolutionLoc = gl.getUniformLocation(this.pointProgram, 'u_resolution');
+    var timeLoc = gl.getUniformLocation(this.pointProgram, 'u_time');
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.pointPositionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, points.positions, gl.DYNAMIC_DRAW);
@@ -828,7 +919,28 @@
     gl.enableVertexAttribArray(colorLoc);
     gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 0, 0);
 
+    if (points.blobs && blobLoc >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.pointBlobBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, points.blobs, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(blobLoc);
+      gl.vertexAttribPointer(blobLoc, 1, gl.FLOAT, false, 0, 0);
+    } else if (blobLoc >= 0) {
+      gl.disableVertexAttribArray(blobLoc);
+      gl.vertexAttrib1f(blobLoc, 0);
+    }
+
+    if (points.headings && headingLoc >= 0) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.pointHeadingBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, points.headings, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(headingLoc);
+      gl.vertexAttribPointer(headingLoc, 1, gl.FLOAT, false, 0, 0);
+    } else if (headingLoc >= 0) {
+      gl.disableVertexAttribArray(headingLoc);
+      gl.vertexAttrib1f(headingLoc, 0);
+    }
+
     gl.uniform2f(resolutionLoc, this.canvas.width, this.canvas.height);
+    gl.uniform1f(timeLoc, (performance.now() - this.startTime) / 1000);
     gl.drawArrays(gl.POINTS, 0, count);
   };
 

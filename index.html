@@ -12,6 +12,7 @@
 
   Modification log
   ----------------
+  2026-08-12  Added prey/predator color pickers in the controls dialog.
   2026-08-12  Added evolve live tweaks (eat/grow, max size, predator attack).
   2026-08-12  Added centered info/controls dialog with live config tweaks;
               panel uses .card + .quark-obstacle for hover/obstacle behavior.
@@ -257,6 +258,43 @@
       height: 0.95rem;
     }
 
+    .color-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .color-field {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.55rem 0.65rem;
+      border-radius: 10px;
+      background: var(--track);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 0.84rem;
+    }
+
+    .color-field input[type="color"] {
+      width: 2rem;
+      height: 1.55rem;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .color-field input[type="color"]::-webkit-color-swatch-wrapper {
+      padding: 2px;
+    }
+
+    .color-field input[type="color"]::-webkit-color-swatch {
+      border: none;
+      border-radius: 3px;
+    }
+
     .hint {
       margin-top: 0.85rem;
       font-size: 0.78rem;
@@ -265,7 +303,8 @@
     }
 
     @media (max-width: 520px) {
-      .toggles {
+      .toggles,
+      .color-row {
         grid-template-columns: 1fr;
       }
 
@@ -337,6 +376,17 @@
           <label class="toggle">
             <input type="checkbox" id="ctrl-predator-attack" checked>
             Predator attack
+          </label>
+        </div>
+
+        <div class="color-row" aria-label="Role colors">
+          <label class="color-field" for="ctrl-prey-color">
+            Prey
+            <input id="ctrl-prey-color" type="color" value="#ffffff">
+          </label>
+          <label class="color-field" for="ctrl-predator-color">
+            Predator
+            <input id="ctrl-predator-color" type="color" value="#ff5c8a">
           </label>
         </div>
 
@@ -432,10 +482,10 @@
       </section>
 
       <p class="hint">
-        Close this panel to watch the field full-screen. Pink agents are predators:
-        they chase and eat smaller boids to grow (capped by max size). With
-        <strong>Predator attack</strong> on, larger predators can eat smaller ones.
-        Eaten prey respawn. This dialog is also a <code>.quark-obstacle</code>.
+        Close this panel to watch the field full-screen.         Predators appear as animated attack blobs (not plain circles); prey stay
+        round. Predators chase and eat smaller boids to grow (capped by max size).
+        With <strong>Predator attack</strong> on, larger predators can eat smaller
+        ones. Eaten prey respawn. This dialog is also a <code>.quark-obstacle</code>.
       </p>
     </aside>
   </div>
@@ -513,6 +563,41 @@
         }
       }
 
+      function hexToRgbLocal(hex) {
+        var raw = String(hex || '').replace('#', '');
+        if (raw.length === 3) {
+          raw = raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2];
+        }
+        var n = parseInt(raw, 16);
+        if (isNaN(n)) {
+          return { r: 255, g: 255, b: 255 };
+        }
+        return {
+          r: (n >> 16) & 255,
+          g: (n >> 8) & 255,
+          b: n & 255
+        };
+      }
+
+      function applyRoleColors() {
+        if (!engine || !engine.particles) {
+          return;
+        }
+        var prey = hexToRgbLocal(quarksWebglConfig.particles.move.evolve.prey_color);
+        var predator = hexToRgbLocal(quarksWebglConfig.particles.move.evolve.predator_color);
+        for (var i = 0; i < engine.particles.length; i++) {
+          var p = engine.particles[i];
+          p.color = p.role === 'predator' ? predator : prey;
+        }
+      }
+
+      function bindColor(id, apply) {
+        var input = document.getElementById(id);
+        input.addEventListener('input', function () {
+          apply(input.value);
+        });
+      }
+
       bindToggle('ctrl-wander', function (on) {
         quarksWebglConfig.particles.move.wander.enable = on;
       });
@@ -529,6 +614,25 @@
       bindToggle('ctrl-predator-attack', function (on) {
         quarksWebglConfig.particles.move.evolve.predator_attack = on;
       });
+
+      bindColor('ctrl-prey-color', function (hex) {
+        quarksWebglConfig.particles.move.evolve.prey_color = hex;
+        quarksWebglConfig.particles.color.value = hex;
+        applyRoleColors();
+      });
+      bindColor('ctrl-predator-color', function (hex) {
+        quarksWebglConfig.particles.move.evolve.predator_color = hex;
+        applyRoleColors();
+      });
+
+      var preyColorInput = document.getElementById('ctrl-prey-color');
+      var predatorColorInput = document.getElementById('ctrl-predator-color');
+      if (quarksWebglConfig.particles.move.evolve.prey_color) {
+        preyColorInput.value = quarksWebglConfig.particles.move.evolve.prey_color;
+      }
+      if (quarksWebglConfig.particles.move.evolve.predator_color) {
+        predatorColorInput.value = quarksWebglConfig.particles.move.evolve.predator_color;
+      }
 
       bindSlider('ctrl-speed', 'val-speed', 1, function (v) {
         quarksWebglConfig.particles.move.speed = v;
