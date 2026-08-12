@@ -5,12 +5,17 @@
   Items
   -----
   #quarks-canvas     Full-screen canvas target for the engine
+  #quarks-panel      Centered synopsis / usage / live tweak dialog
+  #quarks-open       Re-open control when the panel is closed
   js/config.js       quarksWebglConfig defaults
   js/webgl-quarks.js Engine + initQuarksWebGL
 
   Modification log
   ----------------
-  2026-08-12  No markup changes; motion updated via config + engine (boids + wander).
+  2026-08-12  Added evolve live tweaks (eat/grow, max size, predator attack).
+  2026-08-12  Added centered info/controls dialog with live config tweaks;
+              panel uses .card + .quark-obstacle for hover/obstacle behavior.
+  2026-08-12  Motion updated via config + engine (boids + wander).
   (prior)     Initial standalone demo shell.
 -->
 <html lang="en">
@@ -18,28 +23,563 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quarks-JS — WebGL Particle Background</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Syne:wght@600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg: #07080c;
+      --panel: rgba(14, 16, 22, 0.9);
+      --panel-border: rgba(255, 255, 255, 0.1);
+      --text: #e8eaef;
+      --muted: #9aa3b5;
+      --accent: #e82bdb;
+      --accent-soft: rgba(232, 43, 219, 0.18);
+      --track: rgba(255, 255, 255, 0.08);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      --radius: 18px;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; overflow: hidden; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: "Figtree", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
     #quarks-canvas {
       display: block;
       position: fixed;
       inset: 0;
       width: 100%;
       height: 100%;
-      background: #0a0a0a;
+      background: var(--bg);
+    }
+
+    #quarks-open {
+      position: fixed;
+      top: 1.25rem;
+      right: 1.25rem;
+      z-index: 20;
+      display: none;
+      border: 1px solid var(--panel-border);
+      background: var(--panel);
+      color: var(--text);
+      font: 600 0.85rem/1 "Syne", sans-serif;
+      letter-spacing: 0.04em;
+      padding: 0.7rem 1rem;
+      border-radius: 999px;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow);
+    }
+
+    #quarks-open:hover {
+      border-color: rgba(232, 43, 219, 0.45);
+    }
+
+    body.is-panel-closed #quarks-open {
+      display: inline-flex;
+    }
+
+    .panel-shell {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: grid;
+      place-items: center;
+      padding: 1.25rem;
+      pointer-events: none;
+    }
+
+    body.is-panel-closed .panel-shell {
+      display: none;
+    }
+
+    .card.quark-obstacle {
+      pointer-events: auto;
+      width: min(440px, 100%);
+      max-height: min(88vh, 760px);
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      padding: 1.35rem 1.4rem 1.25rem;
+    }
+
+    .panel-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.85rem;
+    }
+
+    .brand {
+      font-family: "Syne", sans-serif;
+      font-weight: 700;
+      font-size: 1.55rem;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .close-btn {
+      flex: 0 0 auto;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 999px;
+      border: 1px solid var(--panel-border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    .close-btn:hover {
+      color: var(--text);
+      border-color: rgba(255, 255, 255, 0.28);
+    }
+
+    .lede {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      margin-bottom: 0.95rem;
+    }
+
+    .howto {
+      margin-bottom: 1.15rem;
+      padding: 0.8rem 0.9rem;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .howto h2,
+    .controls h2 {
+      font-family: "Syne", sans-serif;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+      margin-bottom: 0.45rem;
+    }
+
+    .howto ol {
+      margin-left: 1.1rem;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.55;
+    }
+
+    .howto li + li {
+      margin-top: 0.25rem;
+    }
+
+    .controls {
+      display: grid;
+      gap: 0.85rem;
+    }
+
+    .control-grid {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .row label {
+      font-size: 0.86rem;
+      color: var(--text);
+    }
+
+    .row .value {
+      font-variant-numeric: tabular-nums;
+      font-size: 0.78rem;
+      color: var(--muted);
+      min-width: 2.6rem;
+      text-align: right;
+    }
+
+    .slider-row {
+      display: grid;
+      gap: 0.3rem;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .toggles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.55rem 0.65rem;
+      border-radius: 10px;
+      background: var(--track);
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-size: 0.84rem;
+      user-select: none;
+    }
+
+    .toggle:has(input:checked) {
+      border-color: rgba(232, 43, 219, 0.35);
+      background: var(--accent-soft);
+    }
+
+    .toggle input {
+      accent-color: var(--accent);
+      width: 0.95rem;
+      height: 0.95rem;
+    }
+
+    .hint {
+      margin-top: 0.85rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    @media (max-width: 520px) {
+      .toggles {
+        grid-template-columns: 1fr;
+      }
+
+      .brand {
+        font-size: 1.3rem;
+      }
     }
   </style>
 </head>
 <body>
   <canvas id="quarks-canvas"></canvas>
+
+  <button type="button" id="quarks-open" aria-label="Open Quarks controls">Controls</button>
+
+  <div class="panel-shell">
+    <aside
+      id="quarks-panel"
+      class="card quark-obstacle"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="quarks-title"
+      tabindex="-1"
+    >
+      <div class="panel-top">
+        <h1 class="brand" id="quarks-title">Quarks<span>-JS</span></h1>
+        <button type="button" class="close-btn" id="quarks-close" aria-label="Close panel">×</button>
+      </div>
+
+      <p class="lede">
+        A dependency-free WebGL particle background: linked “quarks,” electric-style
+        connections, mouse grab/attract, lifelike wander + flocking, and an evolve
+        mode where boids eat, grow, and predators can attack each other.
+      </p>
+
+      <section class="howto" aria-label="How to use">
+        <h2>How to use</h2>
+        <ol>
+          <li>Drop in a canvas, load <code>config.js</code> then <code>webgl-quarks.js</code>.</li>
+          <li>Call <code>initQuarksWebGL(canvasId, config)</code> on DOM ready.</li>
+          <li>Move the cursor to grab/attract particles; mark blockers with <code>.quark-obstacle</code>.</li>
+          <li>Tune live below, or edit defaults in <code>js/config.js</code>.</li>
+        </ol>
+      </section>
+
+      <section class="controls" aria-label="Live tweaks">
+        <h2>Live tweaks</h2>
+
+        <div class="toggles">
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-wander" checked>
+            Wander
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-boids" checked>
+            Boids
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-electric" checked>
+            Electric links
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-attract" checked>
+            Mouse attract
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-evolve" checked>
+            Evolve
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="ctrl-predator-attack" checked>
+            Predator attack
+          </label>
+        </div>
+
+        <div class="control-grid">
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-speed">Speed</label>
+              <span class="value" id="val-speed">6</span>
+            </div>
+            <input id="ctrl-speed" type="range" min="1" max="14" step="0.5" value="6">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-wander-strength">Wander strength</label>
+              <span class="value" id="val-wander-strength">0.045</span>
+            </div>
+            <input id="ctrl-wander-strength" type="range" min="0" max="0.12" step="0.005" value="0.045">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-separation">Separation</label>
+              <span class="value" id="val-separation">0.09</span>
+            </div>
+            <input id="ctrl-separation" type="range" min="0" max="0.25" step="0.005" value="0.09">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-alignment">Alignment</label>
+              <span class="value" id="val-alignment">0.045</span>
+            </div>
+            <input id="ctrl-alignment" type="range" min="0" max="0.2" step="0.005" value="0.045">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-cohesion">Cohesion</label>
+              <span class="value" id="val-cohesion">0.03</span>
+            </div>
+            <input id="ctrl-cohesion" type="range" min="0" max="0.15" step="0.005" value="0.03">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-max-size">Max evolve size</label>
+              <span class="value" id="val-max-size">14</span>
+            </div>
+            <input id="ctrl-max-size" type="range" min="4" max="28" step="1" value="14">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-growth">Growth per eat</label>
+              <span class="value" id="val-growth">0.55</span>
+            </div>
+            <input id="ctrl-growth" type="range" min="0.1" max="2" step="0.05" value="0.55">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-predator-chance">Predator spawn %</label>
+              <span class="value" id="val-predator-chance">14</span>
+            </div>
+            <input id="ctrl-predator-chance" type="range" min="0" max="40" step="1" value="14">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-link-distance">Link distance</label>
+              <span class="value" id="val-link-distance">150</span>
+            </div>
+            <input id="ctrl-link-distance" type="range" min="40" max="320" step="5" value="150">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-opacity">Particle opacity</label>
+              <span class="value" id="val-opacity">0.5</span>
+            </div>
+            <input id="ctrl-opacity" type="range" min="0.1" max="1" step="0.05" value="0.5">
+          </div>
+
+          <div class="slider-row">
+            <div class="row">
+              <label for="ctrl-count">Particle density</label>
+              <span class="value" id="val-count">55</span>
+            </div>
+            <input id="ctrl-count" type="range" min="15" max="120" step="5" value="55">
+          </div>
+        </div>
+      </section>
+
+      <p class="hint">
+        Close this panel to watch the field full-screen. Pink agents are predators:
+        they chase and eat smaller boids to grow (capped by max size). With
+        <strong>Predator attack</strong> on, larger predators can eat smaller ones.
+        Eaten prey respawn. This dialog is also a <code>.quark-obstacle</code>.
+      </p>
+    </aside>
+  </div>
+
   <script src="js/config.js"></script>
   <script src="js/webgl-quarks.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
+      var engine = null;
       if (typeof initQuarksWebGL === 'function' && typeof quarksWebglConfig !== 'undefined') {
-        initQuarksWebGL('quarks-canvas', quarksWebglConfig);
+        engine = initQuarksWebGL('quarks-canvas', quarksWebglConfig);
       }
+
+      var panel = document.getElementById('quarks-panel');
+      var openBtn = document.getElementById('quarks-open');
+      var closeBtn = document.getElementById('quarks-close');
+
+      function setPanelOpen(open) {
+        document.body.classList.toggle('is-panel-closed', !open);
+        if (open) {
+          panel.focus();
+        }
+      }
+
+      closeBtn.addEventListener('click', function () {
+        setPanelOpen(false);
+      });
+      openBtn.addEventListener('click', function () {
+        setPanelOpen(true);
+      });
+
+      function fmt(value, digits) {
+        var n = Number(value);
+        return Number.isInteger(n) ? String(n) : n.toFixed(digits);
+      }
+
+      function bindSlider(id, valueId, digits, apply) {
+        var input = document.getElementById(id);
+        var out = document.getElementById(valueId);
+        function sync() {
+          out.textContent = fmt(input.value, digits);
+          apply(Number(input.value));
+        }
+        input.addEventListener('input', sync);
+        out.textContent = fmt(input.value, digits);
+      }
+
+      function bindToggle(id, apply) {
+        var input = document.getElementById(id);
+        input.addEventListener('change', function () {
+          apply(input.checked);
+        });
+      }
+
+      function refreshParticles() {
+        if (engine && typeof engine.createParticles === 'function') {
+          engine.createParticles();
+        }
+      }
+
+      function syncAttractMode(enabled) {
+        var modes = quarksWebglConfig.interactivity.events.onhover.mode.slice();
+        var hasAttract = modes.indexOf('attract') !== -1;
+        if (enabled && !hasAttract) {
+          modes.push('attract');
+        }
+        if (!enabled && hasAttract) {
+          modes = modes.filter(function (m) { return m !== 'attract'; });
+        }
+        quarksWebglConfig.interactivity.events.onhover.mode = modes;
+        if (engine) {
+          engine.onhoverModes = modes;
+          engine.isAttractEnabled = modes.indexOf('attract') !== -1;
+          engine.isGrabEnabled = modes.indexOf('grab') !== -1;
+        }
+      }
+
+      bindToggle('ctrl-wander', function (on) {
+        quarksWebglConfig.particles.move.wander.enable = on;
+      });
+      bindToggle('ctrl-boids', function (on) {
+        quarksWebglConfig.particles.move.boids.enable = on;
+      });
+      bindToggle('ctrl-electric', function (on) {
+        quarksWebglConfig.particles.line_linked.electric.enable = on;
+      });
+      bindToggle('ctrl-attract', syncAttractMode);
+      bindToggle('ctrl-evolve', function (on) {
+        quarksWebglConfig.particles.move.evolve.enable = on;
+      });
+      bindToggle('ctrl-predator-attack', function (on) {
+        quarksWebglConfig.particles.move.evolve.predator_attack = on;
+      });
+
+      bindSlider('ctrl-speed', 'val-speed', 1, function (v) {
+        quarksWebglConfig.particles.move.speed = v;
+      });
+      bindSlider('ctrl-wander-strength', 'val-wander-strength', 3, function (v) {
+        quarksWebglConfig.particles.move.wander.strength = v;
+      });
+      bindSlider('ctrl-separation', 'val-separation', 3, function (v) {
+        quarksWebglConfig.particles.move.boids.separation = v;
+      });
+      bindSlider('ctrl-alignment', 'val-alignment', 3, function (v) {
+        quarksWebglConfig.particles.move.boids.alignment = v;
+      });
+      bindSlider('ctrl-cohesion', 'val-cohesion', 3, function (v) {
+        quarksWebglConfig.particles.move.boids.cohesion = v;
+      });
+      bindSlider('ctrl-max-size', 'val-max-size', 0, function (v) {
+        quarksWebglConfig.particles.move.evolve.max_size = v;
+        if (engine && engine.particles) {
+          for (var i = 0; i < engine.particles.length; i++) {
+            if (engine.particles[i].radius > v) {
+              engine.particles[i].radius = v;
+            }
+          }
+        }
+      });
+      bindSlider('ctrl-growth', 'val-growth', 2, function (v) {
+        quarksWebglConfig.particles.move.evolve.growth_per_eat = v;
+      });
+      bindSlider('ctrl-predator-chance', 'val-predator-chance', 0, function (v) {
+        quarksWebglConfig.particles.move.evolve.predator_chance = v / 100;
+        refreshParticles();
+      });
+      bindSlider('ctrl-link-distance', 'val-link-distance', 0, function (v) {
+        quarksWebglConfig.particles.line_linked.distance = v;
+        quarksWebglConfig.particles.move.boids.distance = v;
+      });
+      bindSlider('ctrl-opacity', 'val-opacity', 2, function (v) {
+        quarksWebglConfig.particles.opacity.value = v;
+        if (engine && engine.particles) {
+          for (var i = 0; i < engine.particles.length; i++) {
+            if (engine.particles[i].role !== 'predator') {
+              engine.particles[i].opacity = v;
+            }
+          }
+        }
+      });
+      bindSlider('ctrl-count', 'val-count', 0, function (v) {
+        quarksWebglConfig.particles.number.value = v;
+        refreshParticles();
+      });
     });
   </script>
 </body>

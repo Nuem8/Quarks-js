@@ -7,17 +7,21 @@
  * - hexToRgb / normalizeMode          Color + hover-mode helpers
  * - createShader / createProgram      WebGL shader compile/link
  * - WebGLQuarks                       Engine: particles, update, draw, mouse, obstacles
- *   - createParticles                 Spawn agents (position, velocity, wanderAngle)
+ *   - createParticles                 Spawn agents (position, velocity, wanderAngle, role)
  *   - applyWander                     Smooth random steering
  *   - applyBoids                      Separation, alignment, cohesion
+ *   - applyEvolveSteering             Predator chase / prey flee
+ *   - resolveEvolve                   Eat smaller agents, grow to max_size, respawn
  *   - clampSpeed                      Keep cruise speed in min/max band
- *   - update                          Forces → integrate → bounds → obstacles
+ *   - update                          Forces → integrate → bounds → obstacles → evolve
  *   - buildLines / buildPoints        Link + point geometry for GPU
  *   - render                          RAF loop
  * - initQuarksWebGL(canvasId, config) Public entry point
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Added evolve: eat-to-grow with max size, predator roles, chase/flee,
+ *             optional predator-vs-predator attacks, and prey respawn.
  * 2026-08-12  Added boids-lite (separation / alignment / cohesion) and wander steering;
  *             per-particle wanderAngle; move speed clamp; attract applied before clamp.
  * (prior)     Initial WebGL quarks engine: particles, electric links, grab/attract,
@@ -252,20 +256,37 @@
     var sizeRandom = this.config.particles.size.random;
     var opacity = this.config.particles.opacity.value;
     var color = hexToRgb(this.config.particles.color.value);
+    var evolve = this.config.particles.move.evolve;
+    var predatorChance = evolve && evolve.enable ? (evolve.predator_chance || 0) : 0;
+    var predatorColor = evolve && evolve.predator_color
+      ? hexToRgb(evolve.predator_color)
+      : { r: 255, g: 92, b: 138 };
+    var predatorOpacity = evolve && evolve.predator_opacity != null
+      ? evolve.predator_opacity
+      : 0.85;
+    var maxSize = evolve && evolve.max_size != null ? evolve.max_size : sizeValue * 4;
     this.particles = [];
     for (var i = 0; i < count; i++) {
       var radius = (sizeRandom ? Math.random() : 1) * sizeValue;
+      radius = Math.min(radius, maxSize);
       var angle = Math.random() * Math.PI * 2;
+      var isPredator = Math.random() < predatorChance;
       var p = {
         x: Math.random() * this.canvas.width,
         y: Math.random() * this.canvas.height,
         vx: Math.cos(angle),
         vy: Math.sin(angle),
-        radius: radius,
-        color: color,
-        opacity: opacity,
-        wanderAngle: Math.random() * Math.PI * 2
+        radius: isPredator ? Math.max(radius, sizeValue * 1.15) : radius,
+        baseRadius: Math.max(0.8, sizeValue * (0.45 + Math.random() * 0.55)),
+        color: isPredator ? predatorColor : color,
+        opacity: isPredator ? predatorOpacity : opacity,
+        wanderAngle: Math.random() * Math.PI * 2,
+        role: isPredator ? 'predator' : 'prey',
+        eatCooldown: 0
       };
+      if (p.radius > maxSize) {
+        p.radius = maxSize;
+      }
       this.particles.push(p);
     }
   };
@@ -349,9 +370,191 @@
     }
   };
 
+  WebGLQuarks.prototype.getEvolveConfig = function () {
+    return this.config.particles.move.evolve || null;
+  };
+
+  WebGLQuarks.prototype.promoteIfNeeded = function (p, evolve) {
+    var threshold = evolve.predator_threshold != null ? evolve.predator_threshold : 5.5;
+    if (p.role !== 'predator' && p.radius >= threshold) {
+      p.role = 'predator';
+      p.color = evolve.predator_color
+        ? hexToRgb(evolve.predator_color)
+        : { r: 255, g: 92, b: 138 };
+      p.opacity = evolve.predator_opacity != null
+        ? evolve.predator_opacity
+        : 0.85;
+    }
+  };
+
+  WebGLQuarks.prototype.canEat = function (hunter, prey, evolve, ignoreCooldown) {
+    if (!hunter || !prey || hunter === prey) {
+      return false;
+    }
+    if (!ignoreCooldown && hunter.eatCooldown > 0) {
+      return false;
+    }
+    var advantage = evolve.size_advantage != null ? evolve.size_advantage : 1.12;
+    if (hunter.radius < prey.radius * advantage) {
+      return false;
+    }
+    if (prey.role === 'predator') {
+      if (!evolve.predator_attack) {
+        return false;
+      }
+      var attackAdv = evolve.predator_attack_advantage != null
+        ? evolve.predator_attack_advantage
+        : 1.18;
+      if (hunter.role !== 'predator' || hunter.radius < prey.radius * attackAdv) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  WebGLQuarks.prototype.applyEvolveSteering = function (p, index, evolve) {
+    if (!evolve || !evolve.enable) {
+      return;
+    }
+    var sense = evolve.sense_distance != null ? evolve.sense_distance : 170;
+    var chase = evolve.chase != null ? evolve.chase : 0.11;
+    var flee = evolve.flee != null ? evolve.flee : 0.13;
+    var bestTarget = null;
+    var bestDist = Infinity;
+    var fleeX = 0;
+    var fleeY = 0;
+    var fleeCount = 0;
+
+    for (var j = 0; j < this.particles.length; j++) {
+      if (j === index) {
+        continue;
+      }
+      var other = this.particles[j];
+      var dx = other.x - p.x;
+      var dy = other.y - p.y;
+      var distSq = dx * dx + dy * dy;
+      if (distSq === 0 || distSq > sense * sense) {
+        continue;
+      }
+      var dist = Math.sqrt(distSq);
+
+      if (this.canEat(p, other, evolve, true)) {
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestTarget = other;
+        }
+      }
+
+      if (p.role !== 'predator' && other.role === 'predator') {
+        fleeX -= dx / dist;
+        fleeY -= dy / dist;
+        fleeCount += 1;
+      } else if (
+        p.role === 'predator' &&
+        other.role === 'predator' &&
+        evolve.predator_attack &&
+        other.radius > p.radius
+      ) {
+        fleeX -= dx / dist;
+        fleeY -= dy / dist;
+        fleeCount += 1;
+      }
+    }
+
+    if (bestTarget) {
+      var tdx = bestTarget.x - p.x;
+      var tdy = bestTarget.y - p.y;
+      var tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+      if (tDist > 0) {
+        p.vx += (tdx / tDist) * chase;
+        p.vy += (tdy / tDist) * chase;
+      }
+    }
+
+    if (fleeCount > 0) {
+      p.vx += (fleeX / fleeCount) * flee;
+      p.vy += (fleeY / fleeCount) * flee;
+    }
+  };
+
+  WebGLQuarks.prototype.respawnParticle = function (p, evolve) {
+    var sizeValue = this.config.particles.size.value;
+    var opacity = this.config.particles.opacity.value;
+    var color = hexToRgb(this.config.particles.color.value);
+    var angle = Math.random() * Math.PI * 2;
+    p.x = Math.random() * this.canvas.width;
+    p.y = Math.random() * this.canvas.height;
+    p.vx = Math.cos(angle);
+    p.vy = Math.sin(angle);
+    p.radius = p.baseRadius || sizeValue * (0.45 + Math.random() * 0.55);
+    p.color = color;
+    p.opacity = opacity;
+    p.role = 'prey';
+    p.eatCooldown = 0;
+    p.wanderAngle = Math.random() * Math.PI * 2;
+  };
+
+  WebGLQuarks.prototype.resolveEvolve = function (evolve) {
+    if (!evolve || !evolve.enable) {
+      return;
+    }
+    var maxSize = evolve.max_size != null ? evolve.max_size : 14;
+    var growth = evolve.growth_per_eat != null ? evolve.growth_per_eat : 0.55;
+    var cooldown = evolve.eat_cooldown != null ? evolve.eat_cooldown : 10;
+    var respawn = evolve.respawn !== false;
+    var eaten = {};
+
+    for (var i = 0; i < this.particles.length; i++) {
+      var hunter = this.particles[i];
+      if (hunter.eatCooldown > 0) {
+        hunter.eatCooldown -= 1;
+      }
+      if (eaten[i]) {
+        continue;
+      }
+
+      for (var j = 0; j < this.particles.length; j++) {
+        if (i === j || eaten[j]) {
+          continue;
+        }
+        var prey = this.particles[j];
+        if (!this.canEat(hunter, prey, evolve)) {
+          continue;
+        }
+        var dx = hunter.x - prey.x;
+        var dy = hunter.y - prey.y;
+        var reach = (hunter.radius + prey.radius) * this.pixelRatio;
+        if (dx * dx + dy * dy > reach * reach) {
+          continue;
+        }
+
+        hunter.radius = Math.min(maxSize, hunter.radius + growth * (0.65 + prey.radius * 0.12));
+        hunter.eatCooldown = cooldown;
+        this.promoteIfNeeded(hunter, evolve);
+
+        if (respawn) {
+          this.respawnParticle(prey, evolve);
+        } else {
+          eaten[j] = true;
+        }
+        break;
+      }
+    }
+
+    if (!respawn) {
+      this.particles = this.particles.filter(function (_p, idx) {
+        return !eaten[idx];
+      });
+    }
+  };
+
   WebGLQuarks.prototype.clampSpeed = function (p, move) {
     var maxSpeed = move.max_speed != null ? move.max_speed : 1.35;
     var minSpeed = move.min_speed != null ? move.min_speed : 0.35;
+    var evolve = move.evolve;
+    if (evolve && evolve.enable && p.role === 'predator') {
+      maxSpeed *= 1.15;
+    }
     var v = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
     if (v > maxSpeed && v > 0) {
       p.vx = (p.vx / v) * maxSpeed;
@@ -403,6 +606,7 @@
     var maxHeight = this.canvas.height;
     var wander = move.wander;
     var boids = move.boids;
+    var evolve = move.evolve;
     var attract = this.config.interactivity.modes.attract;
 
     var obstacleRects = this.getObstacleRects();
@@ -413,6 +617,7 @@
       if (move.enable) {
         this.applyWander(p, wander);
         this.applyBoids(p, i, boids);
+        this.applyEvolveSteering(p, i, evolve);
 
         if (this.mouse.active && this.isAttractEnabled) {
           var dx = this.mouse.x - p.x;
@@ -453,6 +658,8 @@
         this.resolveObstacleCollision(p, obstacleRects[r]);
       }
     }
+
+    this.resolveEvolve(evolve);
   };
 
   WebGLQuarks.prototype.addLineSegment = function (linePositions, lineColors, x1, y1, x2, y2, color, alpha) {

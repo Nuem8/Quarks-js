@@ -11,12 +11,15 @@
  * particles.move              Motion: speed, wrap/bounce, cruise clamp
  *   .wander                   Soft random steering (enable, strength, rate)
  *   .boids                    Flocking: distance, separation_distance, weights
+ *   .evolve                   Eat-to-grow: max size, predators, predator attacks
  * interactivity.events        Hover modes: grab, attract
  * interactivity.modes.grab    Cursor link distance / opacity
  * interactivity.modes.attract Cursor pull strength / max_speed
  *
  * Modification log
  * ----------------
+ * 2026-08-12  Added move.evolve (eat/grow, max size, predator chase/flee,
+ *             predator-vs-predator attacks, respawn).
  * 2026-08-12  Added move.max_speed, move.min_speed, move.wander, move.boids
  *             for lifelike steering and flocking.
  * (prior)     Initial particles.js-style defaults for WebGL quarks demo.
@@ -73,6 +76,23 @@ var quarksWebglConfig = {
         separation: 0.09,
         alignment: 0.045,
         cohesion: 0.03
+      },
+      evolve: {
+        enable: true,
+        predator_chance: 0.14,
+        predator_threshold: 5.5,
+        max_size: 14,
+        growth_per_eat: 0.55,
+        size_advantage: 1.12,
+        predator_attack: true,
+        predator_attack_advantage: 1.18,
+        chase: 0.11,
+        flee: 0.13,
+        sense_distance: 170,
+        eat_cooldown: 10,
+        respawn: true,
+        predator_color: '#ff5c8a',
+        predator_opacity: 0.85
       }
     }
   },
