@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<!--
+  Quarks-JS demo page — full-viewport WebGL particle background.
+
+  Items
+  -----
+  #quarks-canvas     Full-screen canvas target for the engine
+  js/config.js       quarksWebglConfig defaults
+  js/webgl-quarks.js Engine + initQuarksWebGL
+
+  Modification log
+  ----------------
+  2026-08-12  No markup changes; motion updated via config + engine (boids + wander).
+  (prior)     Initial standalone demo shell.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quarks-JS — WebGL Particle Background</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    #quarks-canvas {
+      display: block;
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: #0a0a0a;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="quarks-canvas"></canvas>
+  <script src="js/config.js"></script>
+  <script src="js/webgl-quarks.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (typeof initQuarksWebGL === 'function' && typeof quarksWebglConfig !== 'undefined') {
+        initQuarksWebGL('quarks-canvas', quarksWebglConfig);
+      }
+    });
+  </script>
+</body>
+</html>
