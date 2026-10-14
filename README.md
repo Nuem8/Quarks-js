@@ -1,9 +1,15 @@
+<p align="center">
+  <img src="Quark-JS-logo.png" alt="Quarks-JS — a brass living particle field. Gauges for density and spark intensity, vacuum tubes for atmosphere, and a screen full of quarks that wander, flock, spark, hunt, and die." width="720">
+</p>
+
 # Quarks-JS
 
 **Developer:** Kevin Roper · **License:** [MIT](LICENSE) (Copyright © 2026 Kevin Roper)
 
 **A living particle field for the web.**  
 WebGL quarks that wander, flock, spark, hunt, and die — all in pure JavaScript. Zero dependencies. Zero build step. Open `index.html` and it’s already moving.
+
+The gauges are calibrated. The tubes are mostly for morale. The particles, unfortunately, have opinions.
 
 ---
 
